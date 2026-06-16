@@ -304,37 +304,13 @@ fun MainScreen() {
             )
         }
 
-        // ── Layer 5: Capture animation overlay ──
-        if (capturedBitmap != null && screenSize != IntSize.Zero) {
-            val sw = screenSize.width.toFloat()
-            val sh = screenSize.height.toFloat()
-            val center = Offset(sw / 2f, sh / 2f)
-            val thumbCenter = Offset(
-                thumbnailRect.left + thumbnailRect.width / 2f,
-                thumbnailRect.top + thumbnailRect.height / 2f
-            )
-            val targetScale = if (sw > 0f) thumbnailRect.width / sw else 0.12f
-
-            val progress = capAnimProgress.value
-            val scale = 1.15f + (targetScale - 1.15f) * progress
-            val dx = (thumbCenter.x - center.x) * progress
-            val dy = (thumbCenter.y - center.y) * progress
-
-            Image(
-                bitmap = capturedBitmap!!.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = dx
-                        translationY = dy
-                        alpha = if (progress < 0.85f) 1f else 1f - (progress - 0.85f) / 0.15f
-                    },
-                contentScale = ContentScale.Crop
-            )
-        }
+        // ── Layer 5: Capture animation overlay（独立 Composable，避免全屏重绘） ──
+        CaptureAnimOverlay(
+            capturedBitmap = capturedBitmap,
+            animProgress = capAnimProgress.value,
+            screenSize = screenSize,
+            thumbnailRect = thumbnailRect,
+        )
     }
 }
 
@@ -403,4 +379,53 @@ private fun ZoomIndicator(
             letterSpacing = 1.sp
         )
     }
+}
+
+/**
+ * Capture animation overlay — 独立 Composable，避免动画每帧触发 MainScreen 全屏重绘。
+ *
+ * 优化要点：
+ * 1. 仅此 Composable 在动画期间重组，不影响 CameraPreview / Tab / 底部控制
+ * 2. asImageBitmap() 用 remember 缓存，避免每帧重新上传 GPU 纹理
+ */
+@Composable
+private fun CaptureAnimOverlay(
+    capturedBitmap: Bitmap?,
+    animProgress: Float,
+    screenSize: IntSize,
+    thumbnailRect: Rect,
+) {
+    if (capturedBitmap == null || screenSize == IntSize.Zero) return
+
+    // 关键优化：Bitmap→ImageBitmap 只转换一次，缓存到 capturedBitmap 变化
+    val imageBitmap = remember(capturedBitmap) { capturedBitmap.asImageBitmap() }
+
+    val sw = screenSize.width.toFloat()
+    val sh = screenSize.height.toFloat()
+    val center = Offset(sw / 2f, sh / 2f)
+    val thumbCenter = Offset(
+        thumbnailRect.left + thumbnailRect.width / 2f,
+        thumbnailRect.top + thumbnailRect.height / 2f
+    )
+    val targetScale = if (sw > 0f) thumbnailRect.width / sw else 0.12f
+
+    val scale = 1.15f + (targetScale - 1.15f) * animProgress
+    val dx = (thumbCenter.x - center.x) * animProgress
+    val dy = (thumbCenter.y - center.y) * animProgress
+    val alpha = if (animProgress < 0.85f) 1f else 1f - (animProgress - 0.85f) / 0.15f
+
+    Image(
+        bitmap = imageBitmap,
+        contentDescription = null,
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = dx
+                translationY = dy
+                this.alpha = alpha
+            },
+        contentScale = ContentScale.Crop
+    )
 }
