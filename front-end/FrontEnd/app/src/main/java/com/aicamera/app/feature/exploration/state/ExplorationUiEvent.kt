@@ -1,12 +1,11 @@
-﻿package com.aicamera.app.feature.exploration.state
+package com.aicamera.app.feature.exploration.state
 
 /**
- * Exploration module one-time events (Toast / Navigation, etc., not stored in UiState)
+ * Exploration module one-time events.
+ * Navigation events are handled by the tab switch in MainScreen.
  */
 sealed interface ExplorationUiEvent {
     data class ShowToast(val message: String) : ExplorationUiEvent
-    data object ShutterTriggered : ExplorationUiEvent
-    data class NavigateToComposition(val mode: String) : ExplorationUiEvent
-    data class NavigateToPose(val templateId: Long) : ExplorationUiEvent
+    data class ExploreCompleted(val score: Float) : ExplorationUiEvent
+    data object ExploreFailed : ExplorationUiEvent
 }
-

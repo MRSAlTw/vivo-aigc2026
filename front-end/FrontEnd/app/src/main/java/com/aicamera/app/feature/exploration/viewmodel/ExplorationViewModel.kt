@@ -1,38 +1,30 @@
 package com.aicamera.app.feature.exploration.viewmodel
 
-import android.Manifest
-import android.content.ContentUris
-import android.content.Context
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.provider.MediaStore
-import androidx.camera.view.PreviewView
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleOwner
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicamera.app.core.camera.CameraController
-import com.aicamera.app.feature.exploration.state.CameraMode
 import com.aicamera.app.feature.exploration.state.ExplorationUiEvent
 import com.aicamera.app.feature.exploration.state.ExplorationUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+/**
+ * ViewModel for the 寻景 (Scene Exploration) tab.
+ *
+ * Manages exploration lifecycle: start/stop explore, ultrawide switching,
+ * guidance data. Camera controls (shutter, zoom, flip) are handled by
+ * CameraViewModel in the camera module.
+ */
 @HiltViewModel
 class ExplorationViewModel @Inject constructor(
     private val cameraController: CameraController,
-    @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ExplorationUiState())
@@ -41,180 +33,86 @@ class ExplorationViewModel @Inject constructor(
     private val _events = Channel<ExplorationUiEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** 暴露缩放倍率流供 UI 层观察 */
-    val zoomRatioFlow: Flow<Float> = cameraController.zoomRatioFlow
-
-    /** 拍照结果 Bitmap 流（供 UI 层播放捕获动画） */
-    val photoCaptureFlow = cameraController.photoCaptureResult
-
-    /** 按下快门时立即发出的预览帧 Bitmap（不等照片拍好） */
-    private val _immediateAnimBitmap = MutableStateFlow<Bitmap?>(null)
-    val immediateAnimBitmap: StateFlow<Bitmap?> = _immediateAnimBitmap.asStateFlow()
-
     init {
-        checkPermissions()
-        observePhotoResults()
-        observeZoomState()
+        // 超广角检测：基于变焦范围（minZoomRatio < 1.0 即有超广角）
+        // 需要等 CameraX 绑定完成后 minZoomRatio 才有值
+        // hasUltraWideSupported 是一个属性，会随相机状态更新
+        updateUltraWideState()
     }
+
+    /** 检查是否支持超广角（基于 minZoomRatio < 1.0x） */
+    private fun updateUltraWideState() {
+        val supported = cameraController.hasUltraWideSupported
+        _uiState.value = _uiState.value.copy(hasUltraWide = supported)
+        if (supported) {
+            Log.d("ExplorationVM", "✅ 支持超广角（minZoomRatio=${cameraController.minZoomRatio}x）")
+        } else {
+            Log.d("ExplorationVM", "❌ 不支持超广角（minZoomRatio=${cameraController.minZoomRatio}x）")
+        }
+    }
+
+    // ────────── 寻景控制 ──────────
 
     /**
-     * 由 UI 层在 AndroidView factory 中调用，将 PreviewView 和 LifecycleOwner 绑定到 CameraX。
+     * Start scene exploration:
+     * 1. Refresh ultra-wide state (camera may have just bound)
+     * 2. Switch to ultrawide via zoom-to-min (if minZoom < 1.0x)
+     * 3. Begin analyzing frames for best angle
      */
-    fun bindCameraToPreview(previewView: PreviewView, lifecycleOwner: LifecycleOwner) {
-        cameraController.bindToLifecycle(previewView, lifecycleOwner)
-    }
-
-    private fun checkPermissions() {
-        val hasCamera = ContextCompat.checkSelfPermission(
-            appContext, Manifest.permission.CAMERA
-        ) == PackageManager.PERMISSION_GRANTED
-        _uiState.value = _uiState.value.copy(
-            hasCameraPermission = hasCamera,
-            hasStoragePermission = true
-        )
-    }
-
-    /** 权限被授予后调用 */
-    fun onPermissionsGranted() {
-        _uiState.value = _uiState.value.copy(
-            hasCameraPermission = true,
-            hasStoragePermission = true
-        )
-        // 权限就绪后，加载手机最近的一张照片作为缩略图
-        viewModelScope.launch {
-            loadLatestPhotoFromGallery()
-        }
-    }
-
-    /**
-     * 从系统相册查询最近拍摄的一张照片 URI
-     */
-    private suspend fun loadLatestPhotoFromGallery() = withContext(Dispatchers.IO) {
-        try {
-            val projection = arrayOf(MediaStore.Images.Media._ID)
-            val sortOrder = "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
-            val cursor = appContext.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                null,
-                null,
-                sortOrder
-            )
-            cursor?.use { c ->
-                if (c.moveToFirst()) {
-                    val id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
-                    val uri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
-                    )
-                    _uiState.value = _uiState.value.copy(lastPhotoUri = uri)
-                }
-            }
-        } catch (_: Exception) { }
-    }
-
-    private fun observePhotoResults() {
-        viewModelScope.launch {
-            cameraController.photoCaptureResult.collect { _ ->
-                val uri = cameraController.lastPhotoUri
-                _uiState.value = _uiState.value.copy(
-                    isCapturing = false,
-                    lastPhotoUri = uri
-                )
-                _events.send(ExplorationUiEvent.ShutterTriggered)
-            }
-        }
-    }
-
-    private fun observeZoomState() {
-        viewModelScope.launch {
-            cameraController.zoomRatioFlow.collect { ratio ->
-                _uiState.value = _uiState.value.copy(
-                    currentZoomRatio = ratio,
-                    minZoomRatio = cameraController.minZoomRatio,
-                    maxZoomRatio = cameraController.maxZoomRatio
-                )
-            }
-        }
-    }
-
-    // ────────── 缩放控制 ──────────
-
-    fun onZoomChange(ratio: Float) {
-        viewModelScope.launch {
-            cameraController.setZoomRatio(ratio)
-        }
-    }
-
-    // ────────── 寻景 ──────────
-
     fun onStartExplore() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isExploring = true)
-        }
-    }
+            // 重新检测超广角（此时 CameraX 已经绑定，minZoomRatio 有正确值）
+            updateUltraWideState()
+            val hasUW = _uiState.value.hasUltraWide
 
-    fun onStopExplore() {
-        _uiState.value = _uiState.value.copy(isExploring = false)
-    }
+            _uiState.value = _uiState.value.copy(isExploring = true, isLoading = true)
 
-    // ────────── 拍照 ──────────
-
-    fun onShutterClick() {
-        viewModelScope.launch {
-            if (!_uiState.value.hasCameraPermission) return@launch
-            _uiState.value = _uiState.value.copy(isCapturing = true)
-
-            // 立即截取 PreviewView 当前画面触发飞入动画（不等照片保存完成）
-            cameraController.capturePreviewSnapshot()?.let { bitmap ->
-                _immediateAnimBitmap.value = bitmap
+            // 通过变焦到最小倍率来启用超广角（硬件自动切换传感器）
+            if (hasUW) {
+                Log.d("ExplorationVM", "▶ 启用超广角：zoom → ${cameraController.minZoomRatio}x")
+                cameraController.switchToUltraWide(true)
+                _uiState.value = _uiState.value.copy(isUltraWideActive = true)
+            } else {
+                Log.d("ExplorationVM", "设备不支持超广角，使用主摄扫描")
             }
 
-            // 拍照在后台并行进行
-            cameraController.capturePhoto()
+            // TODO: 接入 YOLOv8n + NIMA 进行场景评分和角度推荐
+            simulateExploration()
+
+            _uiState.value = _uiState.value.copy(isLoading = false)
         }
     }
 
-    /** UI 层播完动画后调用，清除预览帧引用 */
-    fun onCaptureAnimDone() {
-        _immediateAnimBitmap.value = null
-    }
-
-    fun onFlipCamera() {
+    /**
+     * Stop scene exploration and return to main camera.
+     */
+    fun onStopExplore() {
         viewModelScope.launch {
-            cameraController.flipCamera()
+            // 切回主摄
+            if (_uiState.value.isUltraWideActive) {
+                cameraController.switchToUltraWide(false)
+                _uiState.value = _uiState.value.copy(isUltraWideActive = false)
+            }
+
             _uiState.value = _uiState.value.copy(
-                isFrontCamera = !_uiState.value.isFrontCamera
+                isExploring = false,
+                sceneScore = null,
+                guidanceAngle = null,
+                guidanceText = null,
             )
         }
     }
 
-    /** 从系统相机/相册返回后刷新缩略图 */
-    fun refreshLastPhoto() {
-        _uiState.value = _uiState.value.copy(
-            lastPhotoUri = cameraController.lastPhotoUri
-        )
-    }
-
-    // ────────── 模式切换 ──────────
-
-    fun onModeChange(mode: CameraMode) {
-        _uiState.value = _uiState.value.copy(currentMode = mode)
-        // 切换到寻景模式 → 自动开始寻景；切走 → 停止
-        if (mode == CameraMode.EXPLORE) {
-            onStartExplore()
-        } else if (_uiState.value.isExploring) {
-            onStopExplore()
-        }
+    private suspend fun simulateExploration() {
+        // Placeholder: simulate finding angles
+        // Real implementation will:
+        // 1. Collect frames via cameraController.frameFlow
+        // 2. Run YOLOv8n for scene object detection
+        // 3. Score regions via NIMA-MobileNet
+        // 4. Output best AngleAdvice (deltaYaw, deltaPitch)
     }
 
     fun onErrorDismissed() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        viewModelScope.launch {
-            cameraController.shutdown()
-        }
     }
 }

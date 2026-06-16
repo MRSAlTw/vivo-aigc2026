@@ -6,12 +6,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import android.util.Rational
 import android.util.Size
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -43,9 +47,14 @@ import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
 
+private const val TAG = "AICamera.Camera"
+
 /**
  * CameraX 实现类。
  * 管理相机生命周期、预览、拍照和照片保存。
+ *
+ * 超广角方案：不切换摄像头 ID，而是利用变焦。
+ * 当 zoomRatio < 1.0x 时，设备硬件自动切换到超广角传感器（如适用）。
  */
 @Singleton
 class CameraControllerImpl @Inject constructor(
@@ -80,7 +89,10 @@ class CameraControllerImpl @Inject constructor(
     private var _maxZoomRatio = 8.0f
     override val maxZoomRatio: Float get() = _maxZoomRatio
 
-    // 预览帧流：从 ImageAnalysis 产出 CameraFrame
+    /** 超广角检测：如果设备最小变焦 < 1.0x，说明有超广角硬件 */
+    override val hasUltraWideSupported: Boolean get() = _minZoomRatio < 1.0f
+
+    // 预览帧流
     private val _frameFlow = MutableSharedFlow<CameraFrame>(
         replay = 1,
         extraBufferCapacity = 2,
@@ -114,6 +126,7 @@ class CameraControllerImpl @Inject constructor(
         cameraProviderFuture.addListener({
             cameraProvider = try {
                 val provider = cameraProviderFuture.get()
+                cameraProvider = provider // 先赋值，供 bindUseCases 内部使用
                 bindUseCases(provider, pv, owner)
                 provider
             } catch (e: Exception) {
@@ -128,23 +141,19 @@ class CameraControllerImpl @Inject constructor(
         pv: PreviewView,
         owner: LifecycleOwner
     ) {
-        // 解绑旧用例
         provider.unbindAll()
 
-        // Preview
         val preview = Preview.Builder()
             .setTargetResolution(Size(1080, 1920))
             .build()
             .also { it.setSurfaceProvider(pv.surfaceProvider) }
 
-        // ImageCapture
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setTargetResolution(Size(1080, 1920))
             .setTargetRotation(pv.display?.rotation ?: android.view.Surface.ROTATION_0)
             .build()
 
-        // ImageAnalysis（预览帧流）
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(640, 480))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -152,14 +161,11 @@ class CameraControllerImpl @Inject constructor(
             .also { analysis ->
                 analysis.setAnalyzer(analysisExecutor) { imageProxy ->
                     val frame = imageProxyToCameraFrame(imageProxy)
-                    if (frame != null) {
-                        _frameFlow.tryEmit(frame)
-                    }
+                    if (frame != null) _frameFlow.tryEmit(frame)
                     imageProxy.close()
                 }
             }
 
-        // CameraSelector
         val cameraSelector = CameraSelector.Builder()
             .requireLensFacing(_currentLensFacing)
             .build()
@@ -173,7 +179,7 @@ class CameraControllerImpl @Inject constructor(
                 imageAnalysis
             )
 
-            // 观察变焦状态
+            // 观察变焦状态 → 获得 minZoomRatio（< 1.0 说明有超广角）
             camera?.cameraInfo?.zoomState?.observe(owner) { zoomState ->
                 _zoomRatioFlow.value = zoomState.zoomRatio
                 _minZoomRatio = zoomState.minZoomRatio
@@ -181,10 +187,174 @@ class CameraControllerImpl @Inject constructor(
             }
 
             _isCameraReady.value = true
+
+            // 打印摄像头信息
+            logCameraInfo()
         } catch (e: Exception) {
             _isCameraReady.value = false
         }
     }
+
+    /** 打印设备摄像头和变焦信息（调试用） */
+    private fun logCameraInfo() {
+        Log.d(TAG, "═══════════════════════════════════════")
+        Log.d(TAG, "  摄像头就绪")
+        Log.d(TAG, "  zoomRatio   = ${_zoomRatioFlow.value}x")
+        Log.d(TAG, "  minZoom     = ${_minZoomRatio}x")
+        Log.d(TAG, "  maxZoom     = ${_maxZoomRatio}x")
+        Log.d(TAG, "  支持超广角  = ${hasUltraWideSupported} (minZoom < 1.0)")
+        Log.d(TAG, "═══════════════════════════════════════")
+
+        // CameraManager 枚举所有摄像头
+        try {
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            for (cameraId in cameraManager.cameraIdList) {
+                val chars = cameraManager.getCameraCharacteristics(cameraId)
+                val facing = chars.get(CameraCharacteristics.LENS_FACING)
+                val focalLengths = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+                val facingStr = when (facing) {
+                    CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    else -> "OTHER"
+                }
+                Log.d(TAG, "  Camera[$cameraId]: $facingStr, focal=${focalLengths?.joinToString(", ")}mm")
+            }
+        } catch (_: Exception) { }
+    }
+
+    // ────────── Camera2 API 检测（保留仅用于调试） ──────────
+
+    override suspend fun hasUltraWide(): Boolean {
+        // 新方案：只要 minZoomRatio < 1.0x 就算支持超广角
+        return hasUltraWideSupported
+    }
+
+    // ────────── 超广角切换（通过变焦实现） ──────────
+
+    override suspend fun switchToUltraWide(enable: Boolean) {
+        Log.d(TAG, "switchToUltraWide($enable) — 当前 zoomRange=[${_minZoomRatio}x, ${_maxZoomRatio}x]")
+        if (enable) {
+            // 变焦到最广端（如 0.6x），硬件自动切超广角传感器
+            val targetZoom = _minZoomRatio
+            Log.d(TAG, "▶ 切换到超广角：zoom → ${targetZoom}x")
+            setZoomRatio(targetZoom)
+        } else {
+            // 回到 1.0x 标准倍率
+            Log.d(TAG, "◀ 切回主摄：zoom → 1.0x")
+            setZoomRatio(1.0f)
+        }
+    }
+
+    // ────────── 镜头翻转 ──────────
+
+    override suspend fun flipCamera() {
+        _currentLensFacing = if (_currentLensFacing == CameraSelector.LENS_FACING_BACK) {
+            CameraSelector.LENS_FACING_FRONT
+        } else {
+            CameraSelector.LENS_FACING_BACK
+        }
+        rebindUseCases()
+    }
+
+    private fun rebindUseCases() {
+        val pv = previewView ?: return
+        val owner = lifecycleOwner ?: return
+        val provider = cameraProvider ?: return
+        bindUseCases(provider, pv, owner)
+    }
+
+    // ────────── 变焦控制 ──────────
+
+    override suspend fun setZoomRatio(ratio: Float) {
+        try {
+            camera?.cameraControl?.setZoomRatio(ratio)
+        } catch (_: Exception) { }
+    }
+
+    // ────────── 预览快照 ──────────
+
+    override fun capturePreviewSnapshot(): Bitmap? {
+        return try {
+            previewView?.bitmap
+        } catch (_: Exception) { null }
+    }
+
+    // ────────── 拍照 ──────────
+
+    override suspend fun capturePhoto() {
+        val capture = imageCapture ?: return
+        val pv = previewView ?: return
+
+        val photoUri = withContext(Dispatchers.IO) {
+            createPendingMediaStoreUri()
+        }
+
+        if (photoUri != null) {
+            capturePhotoToUri(capture, photoUri)
+        } else {
+            capturePhotoFallback(capture, pv)
+        }
+    }
+
+    private fun capturePhotoToUri(capture: ImageCapture, photoUri: Uri) {
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(
+            context.contentResolver,
+            photoUri,
+            ContentValues().apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.IS_PENDING, 0)
+                }
+            }
+        ).build()
+
+        capture.takePicture(
+            outputOptions,
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    val savedUri = output.savedUri ?: photoUri
+                    _lastPhotoUri = savedUri
+                    loadThumbnail(savedUri)
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    try { context.contentResolver.delete(photoUri, null, null) } catch (_: Exception) {}
+                    val pv = previewView
+                    if (pv != null) capturePhotoFallback(capture, pv)
+                }
+            }
+        )
+    }
+
+    private fun capturePhotoFallback(capture: ImageCapture, pv: PreviewView) {
+        capture.takePicture(
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                    val bitmap = imageProxyToBitmap(imageProxy)
+                    imageProxy.close()
+                    if (bitmap != null) saveBitmapToMediaStore(bitmap)
+                }
+
+                override fun onError(exception: ImageCaptureException) { }
+            }
+        )
+    }
+
+    private fun saveBitmapToMediaStore(bitmap: Bitmap) {
+        val uri = saveBitmapToGallery(context, bitmap)
+        if (uri != null) _lastPhotoUri = uri
+        _photoCaptureResult.tryEmit(bitmap)
+    }
+
+    private fun loadThumbnail(uri: Uri) {
+        try {
+            val bitmap = context.contentResolver.loadThumbnail(uri, Size(200, 200), null)
+            _photoCaptureResult.tryEmit(bitmap)
+        } catch (e: Exception) { }
+    }
+
+    // ────────── 图像处理 ──────────
 
     private fun imageProxyToCameraFrame(imageProxy: ImageProxy): CameraFrame? {
         return try {
@@ -194,19 +364,15 @@ class CameraControllerImpl @Inject constructor(
                 rotationDegrees = imageProxy.imageInfo.rotationDegrees,
                 timestamp = imageProxy.imageInfo.timestamp ?: System.currentTimeMillis(),
                 lensFacing = _currentLensFacing,
-                imageProxy = imageProxy // 调用方需要 close()
+                imageProxy = imageProxy
             )
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
-        // 获取 buffer（处理 nullable planes[0].buffer）
         val plane0 = imageProxy.planes[0] ?: return null
         val rawBuffer: ByteBuffer = when (imageProxy.format) {
             ImageFormat.YUV_420_888, ImageFormat.YUV_422_888, ImageFormat.YUV_444_888 -> {
-                // YUV -> RGB conversion via YuvImage
                 val yBuffer = plane0.buffer
                 val uBuffer = imageProxy.planes[1].buffer
                 val vBuffer = imageProxy.planes[2].buffer
@@ -237,7 +403,6 @@ class CameraControllerImpl @Inject constructor(
         rawBuffer.get(bytes)
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 
-        // 根据旋转角度修正方向
         val rotationDegrees = imageProxy.imageInfo.rotationDegrees
         if (rotationDegrees != 0 && bitmap != null) {
             val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
@@ -246,144 +411,7 @@ class CameraControllerImpl @Inject constructor(
         return bitmap
     }
 
-    override suspend fun hasUltraWide(): Boolean {
-        // CameraX doesn't provide direct focal length API, so we check camera availability
-        // In real implementation, this would query device camera characteristics
-        return try {
-            camera?.cameraInfo != null
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    override suspend fun flipCamera() {
-        _currentLensFacing = if (_currentLensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.LENS_FACING_FRONT
-        } else {
-            CameraSelector.LENS_FACING_BACK
-        }
-        rebindUseCases()
-    }
-
-    override suspend fun switchToUltraWide(enable: Boolean) {
-        if (enable) {
-            // 切换到超广角（通过 CameraSelector 选择广角镜头）
-            // 注意：CameraX 不直接支持在同一 LensFacing 下切换焦距
-            // 实际实现依赖设备支持，这里作为预留接口
-            _isUltraWideActive = true
-        } else {
-            _isUltraWideActive = false
-        }
-        rebindUseCases()
-    }
-
-    private var _isUltraWideActive = false
-
-    private fun rebindUseCases() {
-        val pv = previewView ?: return
-        val owner = lifecycleOwner ?: return
-        val provider = cameraProvider ?: return
-        bindUseCases(provider, pv, owner)
-    }
-
-    override suspend fun setZoomRatio(ratio: Float) {
-        try {
-            camera?.cameraControl?.setZoomRatio(ratio)
-        } catch (_: Exception) { }
-    }
-
-    /** 截取 PreviewView 当前画面（直接用屏幕渲染结果，无 YUV 转换问题） */
-    override fun capturePreviewSnapshot(): Bitmap? {
-        return try {
-            previewView?.bitmap
-        } catch (_: Exception) { null }
-    }
-
-    override suspend fun capturePhoto() {
-        val capture = imageCapture ?: return
-        val pv = previewView ?: return
-
-        // 创建 MediaStore 条目（Android 10+ 作用域存储）
-        val photoUri = withContext(Dispatchers.IO) {
-            createPendingMediaStoreUri()
-        }
-
-        if (photoUri != null) {
-            // 使用 OutputFileOptions 让 CameraX 直接写入 JPEG
-            capturePhotoToUri(capture, photoUri)
-        } else {
-            // 降级：通过内存回调获取 JPEG buffer
-            capturePhotoFallback(capture, pv)
-        }
-    }
-
-    private fun capturePhotoToUri(capture: ImageCapture, photoUri: Uri) {
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(
-            context.contentResolver,
-            photoUri,
-            ContentValues().apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.IS_PENDING, 0)
-                }
-            }
-        ).build()
-
-        capture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val savedUri = output.savedUri ?: photoUri
-                    _lastPhotoUri = savedUri
-                    loadThumbnail(savedUri)
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    // 保存失败，清理 MediaStore 条目
-                    try { context.contentResolver.delete(photoUri, null, null) } catch (_: Exception) {}
-                    // 降级到 fallback（使用本地 previewView 变量）
-                    val pv = previewView
-                    if (pv != null) capturePhotoFallback(capture, pv)
-                }
-            }
-        )
-    }
-
-    private fun capturePhotoFallback(capture: ImageCapture, pv: PreviewView) {
-        capture.takePicture(
-            ContextCompat.getMainExecutor(context),
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                    val bitmap = imageProxyToBitmap(imageProxy)
-                    imageProxy.close()
-                    if (bitmap != null) {
-                        saveBitmapToMediaStore(bitmap)
-                    }
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    // 拍照失败，不做处理
-                }
-            }
-        )
-    }
-
-    private fun saveBitmapToMediaStore(bitmap: Bitmap) {
-        val uri = saveBitmapToGallery(context, bitmap)
-        if (uri != null) {
-            _lastPhotoUri = uri
-        }
-        _photoCaptureResult.tryEmit(bitmap)
-    }
-
-    private fun loadThumbnail(uri: Uri) {
-        try {
-            val bitmap = context.contentResolver.loadThumbnail(uri, Size(200, 200), null)
-            _photoCaptureResult.tryEmit(bitmap)
-        } catch (e: Exception) {
-            // 缩略图加载失败不影响主流程
-        }
-    }
+    // ────────── MediaStore 工具 ──────────
 
     private fun createPendingMediaStoreUri(): Uri? {
         return try {
@@ -403,9 +431,7 @@ class CameraControllerImpl @Inject constructor(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 contentValues
             )
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
@@ -432,9 +458,7 @@ class CameraControllerImpl @Inject constructor(
 
             _lastPhotoUri = uri
             uri
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     override suspend fun shutdown() {
@@ -444,8 +468,7 @@ class CameraControllerImpl @Inject constructor(
             analysisExecutor.shutdown()
             captureExecutor.shutdown()
             _isCameraReady.value = false
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) { }
     }
 }
 

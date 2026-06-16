@@ -31,8 +31,11 @@ interface CameraController {
     /** 绑定 PreviewView 和 LifecycleOwner（由 UI 层在 AndroidView 中调用） */
     fun bindToLifecycle(previewView: PreviewView, lifecycleOwner: LifecycleOwner)
 
-    /** 是否支持超广角 */
+    /** 是否支持超广角（Camera2 API 检测，CameraManager 枚举） */
     suspend fun hasUltraWide(): Boolean
+
+    /** 是否支持超广角（变焦检测：minZoomRatio < 1.0x） */
+    val hasUltraWideSupported: Boolean
 
     /** 切换镜头方向（前后摄） */
     suspend fun flipCamera()

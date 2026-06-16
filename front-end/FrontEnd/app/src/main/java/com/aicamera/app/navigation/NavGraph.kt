@@ -4,15 +4,18 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.aicamera.app.feature.exploration.ui.ExplorationRoute
 
 /**
- * 全局导航图�? * �?feature module 提供 Composable route，在此统一注册�? * 一期仅 ExplorationRoute（取景预�?+ 寻景入口），后续 feature 逐步接入�? */
+ * Global navigation graph.
+ *
+ * Single-activity architecture: the entire app is the main camera screen
+ * with bottom tab navigation. Future screens (settings, gallery, etc.)
+ * can be added as additional routes here.
+ */
 object Routes {
     const val MAIN_CAMERA = "main_camera"
-    const val COMPOSITION = "composition"
-    const val POSE = "pose"
-    const val VOICE_SETTINGS = "voice_settings"
+    // Future: const val GALLERY = "gallery"
+    // Future: const val SETTINGS = "settings"
 }
 
 @Composable
@@ -23,11 +26,7 @@ fun NavGraph() {
         startDestination = Routes.MAIN_CAMERA,
     ) {
         composable(Routes.MAIN_CAMERA) {
-            ExplorationRoute(
-                onNavigateToComposition = { navController.navigate(Routes.COMPOSITION) },
-                onNavigateToPose = { navController.navigate(Routes.POSE) },
-            )
+            MainScreen()
         }
     }
 }
-

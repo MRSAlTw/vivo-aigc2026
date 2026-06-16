@@ -1,49 +1,23 @@
 package com.aicamera.app.feature.exploration.state
 
-import android.net.Uri
-
 /**
- * 相机模式枚举
- */
-enum class CameraMode(val label: String, val emoji: String) {
-    STANDARD("标准", "📷"),
-    EXPLORE("寻景", "🔍"),
-    COMPOSITION("构图", "⊞"),
-    POSE("姿势", "🧑"),
-}
-
-/**
- * Exploration / viewfinder preview page UI state
+ * Exploration (寻景) tab UI state.
+ *
+ * Only contains exploration-specific fields.
+ * Camera state (zoom, flip, shutter) is managed by CameraViewModel in the camera module.
  */
 data class ExplorationUiState(
-    // 相机状态
-    val isCameraReady: Boolean = false,
-    val isFrontCamera: Boolean = false,
+    // 寻景状态
+    val isExploring: Boolean = false,
     val hasUltraWide: Boolean = false,
     val isUltraWideActive: Boolean = false,
 
-    // 变焦
-    val currentZoomRatio: Float = 1.0f,
-    val minZoomRatio: Float = 1.0f,
-    val maxZoomRatio: Float = 8.0f,
-
-    // 寻景相关
-    val isExploring: Boolean = false,
+    // 引导数据
     val sceneScore: Float? = null,
     val guidanceAngle: Float? = null,
     val guidanceText: String? = null,
 
-    // 拍照相关
-    val isCapturing: Boolean = false,
-    val lastPhotoUri: Uri? = null,
-
-    // 相机模式
-    val currentMode: CameraMode = CameraMode.STANDARD,
-
-    // 权限
-    val hasCameraPermission: Boolean = false,
-    val hasStoragePermission: Boolean = false,
-
-    // 错误
+    // 加载/错误
+    val isLoading: Boolean = false,
     val errorMessage: String? = null,
 )
