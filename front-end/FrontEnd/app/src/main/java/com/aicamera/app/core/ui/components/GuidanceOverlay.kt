@@ -35,17 +35,21 @@ fun GuidanceOverlay(
                 drawLine(OverlayGrid, Offset(0f, y), Offset(size.width, y), pathEffect = dash)
             }
         }
-        // Guidance arrow (simplified as a circle + line pointing from center to direction)
+        // Guidance arrow — 从画面中心指向目标方向
         arrowAngle?.let { angle ->
             val center = Offset(size.width / 2, size.height / 2)
-            val radius = size.minDimension * 0.15f
+            val radius = size.minDimension * 0.2f
             val radians = Math.toRadians(angle.toDouble()).toFloat()
             val tip = Offset(
                 center.x + radius * cos(radians),
                 center.y + radius * sin(radians),
             )
-            drawCircle(GuidanceArrow, 12f, tip)
-            drawLine(GuidanceArrow, center, tip, strokeWidth = 4f)
+            // 箭头线（加粗）
+            drawLine(GuidanceArrow, center, tip, strokeWidth = 6f)
+            // 箭头尖端（放大）
+            drawCircle(GuidanceArrow, 24f, tip)
+            // 中心点
+            drawCircle(GuidanceArrow, 8f, center)
         }
     }
 }

@@ -1,6 +1,8 @@
 package com.aicamera.app.di
 
 import android.content.Context
+import com.aicamera.app.core.ai.AiEngine
+import com.aicamera.app.core.ai.AiEngineImpl
 import com.aicamera.app.core.camera.CameraController
 import com.aicamera.app.core.camera.CameraControllerImpl
 import com.aicamera.app.core.camera.PhotoSaver
@@ -33,5 +35,13 @@ object AppModule {
         @ApplicationContext context: Context
     ): PhotoSaver {
         return PhotoSaver(context)
+    }
+
+    @Provides
+    @Singleton
+    fun provideAiEngine(
+        impl: AiEngineImpl,
+    ): AiEngine {
+        return impl
     }
 }

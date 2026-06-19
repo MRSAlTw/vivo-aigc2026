@@ -34,6 +34,13 @@ android {
         jvmTarget = "17"
     }
     buildFeatures { compose = true }
+
+    // 将 model/ 目录加入 assets，模型自动打包进 APK
+    sourceSets {
+        getByName("main") {
+            assets.srcDirs("assets", "../model")
+        }
+    }
 }
 
 dependencies {
@@ -61,6 +68,10 @@ dependencies {
     implementation(libs.hilt.android)
     implementation(libs.androidx.compose.foundation.layout)
     ksp(libs.hilt.android.compiler)
+
+    // TFLite 推理引擎
+    implementation(libs.tflite)
+    implementation(libs.tflite.gpu)
 
     // Room (姿势模板库)
     implementation(libs.room.runtime)

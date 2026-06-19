@@ -110,7 +110,7 @@ fun ExplorationTab(
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
                 Text(
-                    text = "场景评分: ${String.format("%.1f", state.sceneScore ?: 0f)}",
+                    text = "场景评分: ${(state.sceneScore ?: 0f).toInt()}",
                     color = Color.White,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,

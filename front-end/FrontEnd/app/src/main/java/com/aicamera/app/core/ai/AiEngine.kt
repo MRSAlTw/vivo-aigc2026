@@ -1,7 +1,6 @@
 package com.aicamera.app.core.ai
 
 import com.aicamera.app.core.camera.CameraFrame
-import kotlinx.coroutines.flow.Flow
 
 /**
  * AI 推理引擎接口。
@@ -10,10 +9,10 @@ import kotlinx.coroutines.flow.Flow
 interface AiEngine {
 
     /** YOLOv8n 场景目标检测（用于寻景 + 主体检测） */
-    fun detectObjects(frame: CameraFrame): Flow<DetectionResult>
+    suspend fun detectObjects(frame: CameraFrame): DetectionResult
 
     /** MoveNet 实时关节点检测（用于姿势指导） */
-    fun detectPose(frame: CameraFrame): PoseResult?
+    suspend fun detectPose(frame: CameraFrame): PoseResult?
 
     /** NIMA 美学评分（预留自学习） */
     suspend fun assessAesthetics(frame: CameraFrame): Float

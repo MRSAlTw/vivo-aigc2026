@@ -20,6 +20,9 @@ kotlinxSerialization = "1.7.3"
 navigationCompose = "2.8.4"
 foundationLayout = "1.11.2"
 
+# TFLite 推理引擎
+tflite = "2.16.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -63,6 +66,10 @@ kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 # Navigation Compose
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 androidx-compose-foundation-layout = { group = "androidx.compose.foundation", name = "foundation-layout", version.ref = "foundationLayout" }
+
+# TFLite
+tflite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
+tflite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tflite" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
