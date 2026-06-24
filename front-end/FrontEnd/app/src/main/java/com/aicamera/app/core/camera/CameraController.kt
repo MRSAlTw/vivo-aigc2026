@@ -2,6 +2,7 @@ package com.aicamera.app.core.camera
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,13 @@ interface CameraController {
 
     /** 设置缩放倍率 */
     suspend fun setZoomRatio(ratio: Float)
+
+    /**
+     * 动态替换 ImageAnalysis.Analyzer。
+     * 用于构图指导等 feature 临时接管帧分析管线。
+     * 传 null 恢复默认分析器（仅发送 frameFlow）。
+     */
+    fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?)
 
     /** 释放资源 */
     suspend fun shutdown()
