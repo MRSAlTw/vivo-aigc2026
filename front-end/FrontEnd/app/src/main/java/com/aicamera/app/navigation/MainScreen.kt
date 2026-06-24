@@ -60,7 +60,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aicamera.app.core.ui.components.CameraPreview
 import com.aicamera.app.feature.camera.ui.BottomControls
 import com.aicamera.app.feature.camera.viewmodel.CameraViewModel
-import com.aicamera.app.feature.composition.ui.CompositionTab
+import com.aicamera.app.feature.composition.ui.CompositionScreen
 import com.aicamera.app.feature.composition.viewmodel.CompositionViewModel
 import com.aicamera.app.feature.exploration.ui.ExplorationTab
 import com.aicamera.app.feature.exploration.viewmodel.ExplorationViewModel
@@ -124,6 +124,11 @@ fun MainScreen() {
 
     // ── 当前模式 (0=标准, 1=寻景, 2=构图, 3=姿势) ──
     var selectedMode by remember { mutableIntStateOf(0) }
+
+    // ── 构图模式激活/停用：挂载/卸载 FaceDetectionAnalyzer ──
+    LaunchedEffect(selectedMode) {
+        compositionViewModel.setActive(selectedMode == 2)
+    }
 
     // ── 进入相机界面 → 隐藏状态栏（沉浸式拍照体验） ──
     val activity = LocalActivity.current
@@ -232,9 +237,12 @@ fun MainScreen() {
                 onStartExplore = explorationViewModel::onStartExplore,
                 onStopExplore = explorationViewModel::onStopExplore,
             )
-            2 -> CompositionTab(
+            2 -> CompositionScreen(
                 state = compositionState,
-                onSelectMode = compositionViewModel::selectMode,
+                onSelectMode = { mode ->
+                    compositionViewModel.onCompositionChange(mode)
+                    compositionViewModel.selectMode(mode)
+                },
             )
             3 -> PoseTab(state = poseState)
         }
