@@ -73,6 +73,9 @@ dependencies {
     implementation(libs.tflite)
     implementation(libs.tflite.gpu)
 
+    // ML Kit Face Detection (F-CG-05)
+    implementation(libs.mlkit.face.detection)
+
     // Room (姿势模板库)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)

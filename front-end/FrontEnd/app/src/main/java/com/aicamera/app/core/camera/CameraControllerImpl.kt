@@ -112,6 +112,9 @@ class CameraControllerImpl @Inject constructor(
     private var analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var captureExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
+    /** 默认分析器（仅发射 frameFlow），供 clearAnalyzer 恢复 */
+    private var defaultAnalyzer: ImageAnalysis.Analyzer? = null
+
     override fun bindToLifecycle(previewView: PreviewView, lifecycleOwner: LifecycleOwner) {
         this.previewView = previewView
         this.lifecycleOwner = lifecycleOwner
@@ -161,11 +164,12 @@ class CameraControllerImpl @Inject constructor(
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also { analysis ->
-                analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+                defaultAnalyzer = ImageAnalysis.Analyzer { imageProxy ->
                     val frame = imageProxyToCameraFrame(imageProxy)
                     if (frame != null) _frameFlow.tryEmit(frame)
                     imageProxy.close()
                 }
+                analysis.setAnalyzer(analysisExecutor, defaultAnalyzer!!)
             }
 
         val cameraSelector = CameraSelector.Builder()
@@ -461,6 +465,18 @@ class CameraControllerImpl @Inject constructor(
             _lastPhotoUri = uri
             uri
         } catch (e: Exception) { null }
+    }
+
+    // ────────── 动态分析器切换 ──────────
+
+    override fun setAnalyzer(analyzer: ImageAnalysis.Analyzer?) {
+        val analysis = imageAnalysis ?: return
+        if (analyzer != null) {
+            analysis.setAnalyzer(analysisExecutor, analyzer)
+        } else {
+            // 恢复默认分析器
+            defaultAnalyzer?.let { analysis.setAnalyzer(analysisExecutor, it) }
+        }
     }
 
     override suspend fun shutdown() {
