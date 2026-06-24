@@ -23,6 +23,9 @@ foundationLayout = "1.11.2"
 # TFLite 推理引擎
 tflite = "2.16.1"
 
+# ML Kit Face Detection
+mlkitFaceDetection = "16.1.7"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -70,6 +73,9 @@ androidx-compose-foundation-layout = { group = "androidx.compose.foundation", na
 # TFLite
 tflite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
 tflite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tflite" }
+
+# ML Kit
+mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "mlkitFaceDetection" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

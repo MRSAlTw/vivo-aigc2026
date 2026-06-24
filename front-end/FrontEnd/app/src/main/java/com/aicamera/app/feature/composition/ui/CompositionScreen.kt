@@ -71,7 +71,7 @@ fun CompositionTab(
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = mode.displayName,
+                        text = mode.label,
                         color = if (isActive) Color.Black else Color(0xAAFFFFFF),
                         fontSize = 13.sp,
                         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
